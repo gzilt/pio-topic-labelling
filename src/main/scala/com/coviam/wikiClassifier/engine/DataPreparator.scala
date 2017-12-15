@@ -3,42 +3,44 @@ package com.coviam.wikiClassifier.engine
 import org.apache.predictionio.controller.PPreparator
 import org.apache.spark.SparkContext
 import org.apache.spark.ml.feature.{Tokenizer, _}
-import org.apache.spark.mllib.regression.LabeledPoint
-import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.{DataFrame, Row, SQLContext}
-import org.apache.spark.mllib.linalg.{Vector, Vectors}
-import org.apache.spark.sql.types._
-import org.apache.spark.sql.functions.callUDF
+import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
+import org.apache.spark.ml.feature.LabeledPoint
+import org.apache.spark.ml.linalg.Vector
+
 
 class DataPreparator() extends PPreparator[TrainingData, PreparedData]{
 
   override def prepare(sc: SparkContext, trainingData: TrainingData): PreparedData = {
 
     val obs = trainingData.contentAndcategory
-    val sqlContext = SQLContext.getOrCreate(sc)
-    val phraseDataframe = sqlContext.createDataFrame(obs).toDF("content", "category")
-    val categories: Map[String,Int] = phraseDataframe.map(row => row.getAs[String]("category")).collect().zipWithIndex.toMap
-    val tf = processPhrase(phraseDataframe)
-    val labeledpoints = tf.map(row => new LabeledPoint(categories(row.getAs[String]("category")).toDouble, row.getAs[Vector]("rowFeatures")))
-    PreparedData(trainingData,labeledpoints)
+    val spark = SparkSession.builder().config(sc.getConf).getOrCreate()
+    import spark.implicits._
+    val phraseDataFrame = spark.createDataFrame(obs).toDF("content", "category")
+    val categories: Map[String,Int] = phraseDataFrame.map(row => row.getAs[String]("category")).collect().zipWithIndex.toMap
+    val tf = processPhrase(phraseDataFrame)
+    val labeledPoints: Dataset[LabeledPoint] = tf.map(row => {
+      LabeledPoint(categories(row.getAs[String]("category")).toDouble, row.getAs[Vector]("rowFeatures"))
+    })
+
+    PreparedData(trainingData,labeledPoints)
   }
 
-  def processPhrase(phraseDataframe:DataFrame): DataFrame ={
+  def processPhrase(phraseDataFrame:DataFrame): DataFrame ={
 
     val tokenizer = new Tokenizer_new().setInputCol("content").setOutputCol("unigram")
-    val unigram = tokenizer.transform(phraseDataframe)
+    val unigram = tokenizer.transform(phraseDataFrame)
 
     val remover = new StopWordsRemover().setInputCol("unigram").setOutputCol("filtered")
     val stopRemoveDF = remover.transform(unigram)
 
-    var htf = new HashingTF().setInputCol("filtered").setOutputCol("rowFeatures")
+    val htf = new HashingTF().setInputCol("filtered").setOutputCol("rowFeatures")
     val tf = htf.transform(stopRemoveDF)
 
     tf
   }
 }
 
-case class PreparedData(var trainingData: TrainingData, var labeledpoints:RDD[LabeledPoint]) extends Serializable{
+case class PreparedData(var trainingData: TrainingData, var labeledPoints:Dataset[LabeledPoint]) extends Serializable{
 }
 
 class Tokenizer_new extends Tokenizer(){

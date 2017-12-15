@@ -4,7 +4,7 @@
   "engineFactory": "com.coviam.wikiClassifier.engine.wikiClassifierEngine",
   "datasource": {
     "params" : {
-      "appName" : "test_wiki"
+      "appName" : "pio-topic-labelling-test"
     }
   },
   "algorithms": [

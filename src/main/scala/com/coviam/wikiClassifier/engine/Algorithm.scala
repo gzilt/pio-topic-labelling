@@ -1,59 +1,57 @@
 package com.coviam.wikiClassifier.engine
 
-import org.apache.predictionio.controller.{IPersistentModel, IPersistentModelLoader, P2LAlgorithm, Params}
-import org.apache.spark
+import org.apache.predictionio.controller.{P2LAlgorithm, Params, PersistentModel, PersistentModelLoader}
 import org.apache.spark.SparkContext
-import org.apache.spark.ml.feature._
-import org.apache.spark.mllib.classification.{NaiveBayes, NaiveBayesModel}
-import org.apache.spark.mllib.linalg.{Vector, Vectors}
-import org.apache.spark.mllib.regression.LabeledPoint
-import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.{Column, DataFrame, Row, SQLContext}
-import org.apache.spark.sql.functions.lit
-import org.apache.spark.SparkConf
+import org.apache.spark.ml.feature.{HashingTF}
+import org.apache.spark.ml.classification.{NaiveBayes,NaiveBayesModel}
+import org.apache.spark.sql._
+
+
 
 class Algorithm(val ap:AlgorithmParams) extends P2LAlgorithm[PreparedData, Model, Query, PredictedResult]{
 
   override def train(sc: SparkContext, pd: PreparedData): Model = {
-   val nbModel =  NaiveBayes.train(pd.labeledpoints,lambda = ap.lambda)
-   val obs = pd.trainingData.contentAndcategory
-   val sqlContext = SQLContext.getOrCreate(sc)
-   val phraseDataframe = sqlContext.createDataFrame(obs).toDF("content", "category")
-   val categories: Map[String,Int] = phraseDataframe.map(row => row.getAs[String]("category")).collect().zipWithIndex.toMap
-   Model(nbModel, categories, sc)
+
+    val nbModel: NaiveBayesModel =  new NaiveBayes().fit(pd.labeledPoints)
+    val spark = SparkSession.builder().config(sc.getConf).getOrCreate()
+    import spark.implicits._
+    val obs = pd.trainingData.contentAndcategory
+    //val sqlContext = SQLContext.getOrCreate(sc)
+    val phraseDataFrame = spark.createDataFrame(obs).toDF("content", "category")
+    val categories: Map[String,Int] = phraseDataFrame.map(row => row.getAs[String]("category")).collect().zipWithIndex.toMap
+    Model(nbModel, categories, sc)
   }
 
   override def predict(model: Model, query: Query): PredictedResult = {
-
-    val sqlContext = SQLContext.getOrCreate(model.sc)
     val qryInd = query.topics.zipWithIndex
-    val df = sqlContext.createDataFrame(qryInd).toDF("words","id")
-    var htf = new HashingTF().setInputCol("words").setOutputCol("feature")
-    val hm = htf.transform(df)
-    val featureSet = hm.map(x => x.getAs[Vector]("feature"))
+    val spark = SparkSession.builder().config(model.sc.getConf).getOrCreate()
+    val df = spark.createDataFrame(qryInd).toDF("words","id")
+    val hashingTF = new HashingTF().setInputCol("words").setOutputCol("features")
+    val featurizedData = hashingTF.transform(df)
+    val featureSet = featurizedData.select("features")
     val categories = model.categories.map(_.swap)
-    val prediction = model.nbModel.predict(featureSet).first()
-    val cat = categories(prediction.toInt)
-    val prob = model.nbModel.predictProbabilities(featureSet)
+    val prediction = model.nbModel.transform(featureSet).select("prediction").first().getDouble(0).toInt
+    val cat = categories(prediction)
     PredictedResult(cat)
   }
 }
 case class Model( nbModel: NaiveBayesModel,
                   categories : Map[String,Int],
-                     sc: SparkContext
-                   ) extends IPersistentModel[AlgorithmParams] with Serializable{
+                  sc: SparkContext) extends PersistentModel[AlgorithmParams] with Serializable {
+
   def save(id: String, params: AlgorithmParams, sc: SparkContext): Boolean = {
-    nbModel.save(sc, s"/tmp/${id}/nbmodel")
+    nbModel.save(s"/tmp/${id}/nbmodel")
     sc.parallelize(Seq(categories)).saveAsObjectFile(s"/tmp/${id}/categories")
     true
   }
+
 }
 
-object Model extends IPersistentModelLoader[AlgorithmParams, Model]{
+object Model extends PersistentModelLoader[AlgorithmParams, Model]{
   def apply(id: String, params: AlgorithmParams, sc: Option[SparkContext]) = {
    // println(sc.get.objectFile(s"/tmp/${id}/categories"))
     new Model(
-      NaiveBayesModel.load(sc.get,s"/tmp/${id}/nbmodel"),
+      NaiveBayesModel.load(s"/tmp/${id}/nbmodel"),
       sc.get.objectFile[Map[String,Int]](s"/tmp/${id}/categories").first,
       sc.get
     )

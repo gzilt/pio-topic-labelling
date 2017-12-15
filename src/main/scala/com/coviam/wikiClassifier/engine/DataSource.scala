@@ -5,8 +5,6 @@ import org.apache.predictionio.controller._
 import org.apache.predictionio.data.storage.{Event, PropertyMap, Storage}
 import org.apache.predictionio.data.store.PEventStore
 import org.apache.spark.SparkContext
-import org.apache.spark.mllib.linalg.Vector
-import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.DataFrame
 
@@ -17,8 +15,8 @@ class DataSource(val dsp: DataSourceParam) extends PDataSource[TrainingData, Emp
     val eventDB = Storage.getPEvents()
     val eventRDD: RDD[Event] = PEventStore.find(
       appName = dsp.appName,
-      entityType = Some("wiki_page"),
-      eventNames = Some(List("train"))
+      entityType = Some("WikiPage"),
+      eventNames = Some(List("traindata"))
       )(sc)
     val sentimentRDD : RDD[WikiPage] = eventRDD.map{
       event  =>
@@ -50,8 +48,7 @@ class TrainingData(val contentAndcategory:RDD[WikiPage]) extends Serializable wi
     }
   }
 }
-case class Query(topics: Seq[Array[String]]) extends Serializable
+
+case class Query(topics: Array[Array[String]]) extends Serializable
 case class DataSourceParam(appName:String, evalK:Int) extends Params
-
 case class WikiPage(content:String, category:String)
-

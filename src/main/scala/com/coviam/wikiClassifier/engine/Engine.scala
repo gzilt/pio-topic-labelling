@@ -1,6 +1,6 @@
 package com.coviam.wikiClassifier.engine
 
-import org.apache.predictionio.controller.{Engine, EngineFactory, IEngineFactory}
+import org.apache.predictionio.controller.{Engine, EngineFactory}
 
 
 object wikiClassifierEngine extends EngineFactory{
